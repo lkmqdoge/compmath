@@ -16,6 +16,7 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           python = (pkgs.python313.withPackages(ps: [
+            ps.pyqtgraph
             ps.numpy
             ps.matplotlib
             ps.pyqt6
