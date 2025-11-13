@@ -20,6 +20,7 @@
             ps.numpy
             ps.matplotlib
             ps.pyqt6
+            ps.scipy
           ]));
         in
         {

@@ -1,50 +1,100 @@
-from typing import Callable
 import pyqtgraph as pg
-from PyQt6.QtWidgets import QApplication, \
+
+from typing import Callable, Optional
+from math import cos, isnan, sqrt
+from scipy.optimize import root_scalar
+from PyQt6.QtWidgets import \
+                            QApplication, \
                             QWidget, \
                             QMainWindow, \
                             QPushButton, \
                             QVBoxLayout, \
-                            QLineEdit
-#
+                            QHBoxLayout, \
+                            QLabel, \
+                            QLineEdit, \
+                            QTableWidget, \
+                            QTableWidgetItem, \
+                            QDoubleValidator, \
+                            QHeaderView
+
 # Задание 
 # 1. Метод половинного деления
 # 2. Метод двух секущих
 
+class IterVisitor():
+    def __init__(self) -> None:
+        self.total: list[tuple[
+                int,   # Номер итерации
+                float, # current x 
+                float  # f(x)
+            ]] = []
+
+    def add(self, iter: tuple[int, float, float]) -> None:
+        self.total.append(iter)
+
+    def get(self) -> list[tuple[int, float, float]]: 
+        return self.total
+
+
 # Половинное деление
-def HalfSection(a: float, b: float, f: Callable[[float], float], eps: float):
-    if (f(a)*f(b) < 0):
-        pass # Корней нет
+def my_bisect(a: float,
+              b: float,
+              f: Callable[[float], float],
+              eps: float,
+              vis: IterVisitor
+              ) -> tuple[bool, float]:
+    if f(a)*f(b) >= 0:
+        return (False, 0) # Возможно корней нет
 
     i: int = 0
     while 1:
-        x0: float = (a + b) / 2
+        x0 = (a + b) / 2
         i+=1
+        fx: float = f(x0)
 
-        if f(x0) == 0:
-            break # Корней нет?
+        vis.add((i, x0, fx))
+
+        if fx == 0:
+            return (True, x0)
         
-        if f(a) * f(x0) < 0:
+        if f(a) * fx < 0:
             b = x0
         else:
-            b = x0
+            a = x0
 
-        if abs(b - a) <= eps and f(x0) <= eps:
-            break # Выход с выводом корня
+        if abs(b - a) <= eps and fx <= eps:
+            return (True, x0)
+
+    return (False, 0)
     
 # Метод двух секущих
 # Метод двухшаговый - потому что на каждом шаге нужно 2 точки 
-def DoubleSecant(a: float, b: float, f: Callable[[float], float], eps: float,
-                                                                  i_max: int) -> float:
+def my_secant(a: float,
+              b: float,
+              f: Callable[[float], float],
+              eps: float,
+              i_max: int,
+              vis: IterVisitor
+                 ) -> tuple[bool, float]:
     i: int = 1
     x_prev: float = a
     x_crnt: float = b
     f_prev: float = f(x_prev)
-    f_crnt: float 
+    f_crnt: float = 0
+
     while i < i_max:
         f_crnt = f(x_crnt)
-        x_new = x_crnt - (x_crnt - x_prev)/(f_crnt - f_prev)*f_crnt
-        e:float = abs(x_new - x_crnt)
+        
+        if f_crnt == f_prev:
+            return (False, x_crnt) # Деление на ноль
+
+        if isnan(f_crnt) or isnan(f_prev):
+            return (False, x_crnt) 
+
+        x_new = x_crnt - (x_crnt - x_prev) / (f_crnt - f_prev) * f_crnt
+        e: float = abs(x_new - x_crnt)
+
+        vis.add((i, x_new, f_crnt))
 
         if e < eps:
              break
@@ -53,45 +103,143 @@ def DoubleSecant(a: float, b: float, f: Callable[[float], float], eps: float,
             f_prev = f_crnt
             x_crnt = x_new
             i+=1
-    return x_crnt
+
+    return (True, x_crnt)
 
 
 class MainWindow(QMainWindow):
-    def set_plot(self, x:list[float], y:list[float]):
-        self.plot_graph.plot(
-            x,
-            y,
-            name = "ВычМат 1",
-        )
-
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
+        self._ui()
+        self._layout()
 
-        # Temperature vs time plot
-        self.plot_graph = pg.PlotWidget()
+
+    def _ui(self) -> None:
+        # plot graph
+        self.plot_graph: pg.PlotWidget = pg.PlotWidget()
         self.plot_graph.setBackground("w")
         self.plot_graph.showGrid(x=True, y=True)
 
-        button = QPushButton("TEST");
-        self.input = QLineEdit()
-        # connect text changed signal
+        # status 
+        self.status_container: QWidget = QWidget()
+        self.status_label:QLabel = QLabel("Hi!")
 
-        layout = QVBoxLayout()        
+        # input 
+        self.buttons_container: QWidget = QWidget()
+        self.update_button: QPushButton = QPushButton("Update");
+        self.update_button.clicked.connect(self._update)
+
+        self.a_input_label: QLabel = QLabel("a:")
+        self.a_input: QLineEdit = QLineEdit()
+        self.a_input.setValidator(QDoubleValidator(10e-15, 10e15, 2))
+
+        self.b_input_label: QLabel = QLabel("b:")
+        self.b_input: QLineEdit = QLineEdit()
+        self.b_input.setValidator(QDoubleValidator(10e-15, 10e15, 2))
+
+        self.eps_input_label: QLabel = QLabel("eps:")
+        self.eps_input: QLineEdit = QLineEdit()
+        self.eps_input.setValidator(QDoubleValidator(10e-15, 10e15, 2))
+
+        self.max_iter_input_label: QLabel = QLabel("max_iter:")
+        self.max_iter_input: QLineEdit = QLineEdit()
+    
+        # table
+        self.table_widget = QTableWidget()
+        self.table_widget.setColumnCount(3)  
+        self.table_widget.horizontalHeader().setStretchLastSection(True)
+
+        # main 
+        self.container: QWidget = QWidget()
+
+
+    def _layout(self) -> None:
+        # status 
+        status_layout: QHBoxLayout = QHBoxLayout()
+        status_layout.addWidget(self.status_label)
+
+        self.status_container.setLayout(status_layout)
+        # input
+        buttonx_layout: QHBoxLayout = QHBoxLayout()
+        buttonx_layout.addWidget(self.update_button) 
+
+        buttonx_layout.addWidget(self.a_input_label) 
+        buttonx_layout.addWidget(self.a_input)
+
+        buttonx_layout.addWidget(self.b_input_label) 
+        buttonx_layout.addWidget(self.b_input)
+
+        buttonx_layout.addWidget(self.eps_input_label) 
+        buttonx_layout.addWidget(self.eps_input)
+
+        buttonx_layout.addWidget(self.max_iter_input_label) 
+        buttonx_layout.addWidget(self.max_iter_input)
+
+        self.buttons_container.setLayout(buttonx_layout)
+
+        layout: QVBoxLayout = QVBoxLayout()        
         layout.addWidget(self.plot_graph)
-        layout.addWidget(button)
-        layout.addWidget(self.input)
+        layout.addWidget(self.status_container)
+        layout.addWidget(self.buttons_container)
+        layout.addWidget(self.table_widget)
 
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        self.container.setLayout(layout)
+        self.setCentralWidget(self.container)
 
 
-f: Callable[[float], float] = lambda x: x*x*x + 10
+    def _update(self) -> None:
+        eps:  float   =  self.eps_input.text()
+        a:    float   =  self.a_input.text()
+        b:    float   =  self.b_input.text()
+        max_iter: int =  self.max_iter_input.text()
 
-app = QApplication([])
-main = MainWindow()
-time:list[float] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-temperature:list[float] = [30, 32, 34, 32, 33, 31, 29, 32, 35, 30]
-main.set_plot(time, temperature)
-main.show()
-app.exec()
+        v: IterVisitor = IterVisitor()
+        f: Callable[[float], float] = lambda x: \
+               sqrt(x) - cos(0.374 + x) if x>=0 else float("nan")
+
+        (r, x) = my_bisect(a, b, f, eps, v) 
+        if not r:
+            self.status_label.setText("Root not find (")
+            return
+
+        self.status_label.setText(f"x={x}")
+
+        t: list[tuple[int, float, float]] = v.get()
+
+        # Updating Table
+        self.table_widget.setRowCount(len(t))
+        for i in range(len(t)):
+            for j in range(3):
+                self.table_widget.setItem(i, j, QTableWidgetItem(str(t[i][j])))
+    
+    def _update_a(self) -> None:
+        pass
+
+    def _update_b(self) -> None:
+        pass
+
+    def _set_plot(self,
+                  x: list[float],
+                  y: list[float]
+                  ) -> None:
+        self.plot_graph.plot(
+            x,
+            y,
+            name = "",
+        )
+
+
+def main() -> None:
+    app    = QApplication([])
+    window = MainWindow()
+
+    # Функция
+    f: Callable[[float], float] = lambda x: \
+            sqrt(x) - cos(0.374 + x) if x>=0 else float("nan")
+    eps: float = 0.0001
+
+    window.show()
+    app   .exec()
+
+if __name__ == "__main__":
+    main()
